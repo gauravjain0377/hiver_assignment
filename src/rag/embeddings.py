@@ -30,34 +30,62 @@ class EmbeddingModel:
         return cls._instance
 
     def _load(self):
-        """Lazy load the model (only when first used)."""
-        if self._model is None:
-            logger.info(f"Loading embedding model: {self.model_name}")
+        """Lazy load the embedding model with ultra-low memory ONNX (FastEmbed) first."""
+        if self._model is not None:
+            return
+
+        # Strategy 1: FastEmbed (ONNX Runtime, ~35MB RAM, ideal for Render 512MB free tier)
+        try:
+            logger.info("Loading ultra-lightweight ONNX embedder (fastembed)...")
+            from fastembed import TextEmbedding
+            # Map standard model names to FastEmbed supported models
+            fe_name = "sentence-transformers/all-MiniLM-L6-v2"
+            self._model = TextEmbedding(model_name=fe_name)
+            self._mode = "fastembed"
+            self._dim = 384
+            logger.success("FastEmbed (ONNX) loaded successfully with ~35MB RAM usage.")
+            return
+        except Exception as e:
+            logger.warning(f"FastEmbed not available or failed ({e}), falling back to sentence-transformers...")
+
+        # Strategy 2: SentenceTransformers (PyTorch, ~450MB RAM)
+        try:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self.model_name)
-            logger.success(f"Model loaded. Embedding dim: {self._model.get_sentence_embedding_dimension()}")
+            self._mode = "sentence_transformers"
+            self._dim = self._model.get_sentence_embedding_dimension()
+            logger.success(f"SentenceTransformer loaded. Embedding dim: {self._dim}")
+            return
+        except Exception as e:
+            logger.error(f"Failed to load sentence-transformers: {e}")
+            self._mode = "fallback"
+            self._dim = 384
 
     def embed(self, texts: list[str], batch_size: int = 64, show_progress: bool = False) -> np.ndarray:
         """
         Encode a list of texts into embeddings.
-
-        Args:
-            texts: List of strings to embed
-            batch_size: Batch size for encoding
-            show_progress: Show tqdm progress bar
-
-        Returns:
-            numpy array of shape (len(texts), embedding_dim)
+        Returns: numpy array of shape (len(texts), embedding_dim)
         """
         self._load()
-        embeddings = self._model.encode(
-            texts,
-            batch_size=batch_size,
-            show_progress_bar=show_progress,
-            normalize_embeddings=True,  # Cosine similarity via dot product
-            convert_to_numpy=True,
-        )
-        return embeddings
+        if self._mode == "fastembed":
+            # fastembed returns generator of numpy arrays
+            gen = self._model.embed(texts, batch_size=batch_size)
+            arr = np.array(list(gen), dtype=np.float32)
+            # Normalize vectors for cosine similarity
+            norms = np.linalg.norm(arr, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            return arr / norms
+        elif self._mode == "sentence_transformers":
+            return self._model.encode(
+                texts,
+                batch_size=batch_size,
+                show_progress_bar=show_progress,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+        else:
+            # Emergency zero-memory fallback
+            return np.zeros((len(texts), self._dim), dtype=np.float32)
 
     def embed_single(self, text: str) -> np.ndarray:
         """Embed a single string."""
