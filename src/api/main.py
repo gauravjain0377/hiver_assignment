@@ -54,11 +54,20 @@ class ClassificationResult(BaseModel):
     method: str
 
 
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
 class DraftResult(BaseModel):
     reply: str
     retrieved_examples_count: int
     avg_retrieval_score: float
     fallback_used: bool
+    retrieved_examples: list = []
 
 
 class RoutingResult(BaseModel):
@@ -91,16 +100,15 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """API root — links to docs."""
+    """Serve the interactive web UI dashboard."""
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
     return {
         "name": "Hiver AI Support Agent",
         "brand": settings.target_brand,
         "docs": "/docs",
         "health": "/health",
-        "endpoints": {
-            "process": "POST /process",
-            "classify": "POST /classify",
-        },
     }
 
 
@@ -125,6 +133,7 @@ async def process_message(request: ProcessRequest):
                 retrieved_examples_count=response.retrieved_examples_count,
                 avg_retrieval_score=response.avg_retrieval_score,
                 fallback_used=response.fallback_used,
+                retrieved_examples=response.retrieved_examples or [],
             ),
             routing=RoutingResult(
                 should_escalate=response.should_escalate,

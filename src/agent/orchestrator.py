@@ -46,6 +46,7 @@ class AgentResponse:
     # Metadata
     processing_time_ms: float
     brand: str
+    retrieved_examples: list = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -110,6 +111,7 @@ class AgentOrchestrator:
             retrieved_examples_count=draft_result["retrieved_count"],
             avg_retrieval_score=draft_result["avg_retrieval_score"],
             fallback_used=draft_result["fallback_used"],
+            retrieved_examples=retrieved,
             should_escalate=routing["should_escalate"],
             escalation_reason=routing["reason"],
             escalation_trigger=routing["trigger_type"],

@@ -16,7 +16,7 @@ services:
       - key: TARGET_BRAND
         value: AppleSupport
       - key: GROQ_MODEL
-        value: llama-3.1-70b-versatile
+        value: llama-3.3-70b-versatile
       - key: EMBEDDING_MODEL
         value: all-MiniLM-L6-v2
       - key: RAG_TOP_K

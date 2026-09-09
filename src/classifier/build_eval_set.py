@@ -4,6 +4,9 @@ Samples and prepares conversations for hand-labelling.
 Creates a CSV for easy labelling + a validation script.
 """
 import sys
+import io
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import json
 import random
 import csv
