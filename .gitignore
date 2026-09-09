@@ -37,6 +37,7 @@ data/processed/
 
 # Keep golden eval (hand-labelled, small)
 !data/golden_eval/
+!data/golden_eval/**
 
 # SQLite
 *.db

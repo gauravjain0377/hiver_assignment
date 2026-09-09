@@ -101,14 +101,13 @@ def reconstruct_threads(df: pd.DataFrame, brand: str) -> list[dict]:
 def process_data(
     brand: Optional[str] = None,
     sample_size: Optional[int] = None,
-    chunk_size: int = 100_000,
+    chunk_size: int = 200_000,
 ) -> Path:
     """
-    Full preprocessing pipeline:
-    1. Load raw CSV in chunks (handles large file)
-    2. Filter for target brand
-    3. Reconstruct conversation threads
-    4. Save to processed directory
+    Two-pass efficient preprocessing pipeline:
+    1. Pass 1: Collect brand replies and set of parent customer tweet IDs.
+    2. Pass 2: Collect parent customer tweets by ID.
+    3. Reconstruct (customer_message, brand_reply) pairs and save.
     """
     brand = brand or settings.target_brand
     raw_path = Path(settings.data_raw_path) / "twcs.csv"
@@ -118,7 +117,7 @@ def process_data(
 
     if output_file.exists():
         logger.info(f"Processed data already exists: {output_file}")
-        existing = json.loads(output_file.read_text())
+        existing = json.loads(output_file.read_text(encoding="utf-8"))
         logger.info(f"Loaded {len(existing):,} conversations")
         return output_file
 
@@ -128,35 +127,83 @@ def process_data(
         sys.exit(1)
 
     logger.info(f"Processing data for brand: {brand}")
-    logger.info(f"Reading {raw_path} in chunks of {chunk_size:,}...")
+    logger.info("Pass 1: Identifying brand replies and target customer tweet IDs...")
 
-    chunks = []
+    brand_replies = []
+    parent_ids = set()
     total_rows = 0
 
     for chunk in tqdm(
         pd.read_csv(raw_path, chunksize=chunk_size, dtype=str, low_memory=False),
-        desc="Reading chunks"
+        desc="Pass 1 (Brand replies)"
     ):
         total_rows += len(chunk)
-        # Keep only rows relevant to this brand
+        # Filter for tweets authored by brand that are replies
         mask = (
-            chunk["author_id"].str.lower().str.contains(brand.lower(), na=False) |
+            chunk["author_id"].str.lower().str.contains(brand.lower(), na=False) &
             chunk["in_response_to_tweet_id"].notna()
         )
-        chunks.append(chunk[mask])
+        brand_chunk = chunk[mask]
+        if not brand_chunk.empty:
+            brand_replies.append(brand_chunk)
+            # Parse parent IDs
+            clean_parent_ids = pd.to_numeric(brand_chunk["in_response_to_tweet_id"], errors="coerce").dropna().astype(int)
+            parent_ids.update(clean_parent_ids.tolist())
 
-    logger.info(f"Total rows in dataset: {total_rows:,}")
-    df = pd.concat(chunks, ignore_index=True)
+    logger.info(f"Total raw tweets scanned: {total_rows:,}")
+    if not brand_replies:
+        logger.warning(f"No replies found for brand: {brand}")
+        return output_file
 
-    # Convert types
-    df["tweet_id"] = pd.to_numeric(df["tweet_id"], errors="coerce")
-    df["in_response_to_tweet_id"] = pd.to_numeric(df["in_response_to_tweet_id"], errors="coerce")
-    df["inbound"] = df["inbound"].map({"True": True, "False": False, True: True, False: False})
+    df_brand = pd.concat(brand_replies, ignore_index=True)
+    df_brand["tweet_id"] = pd.to_numeric(df_brand["tweet_id"], errors="coerce")
+    df_brand["in_response_to_tweet_id"] = pd.to_numeric(df_brand["in_response_to_tweet_id"], errors="coerce")
+    logger.info(f"Found {len(df_brand):,} replies from {brand} addressing {len(parent_ids):,} customer tweets")
 
-    logger.info(f"Filtered to {len(df):,} relevant rows for {brand}")
+    # Pass 2: Extract customer tweets matching parent_ids
+    logger.info("Pass 2: Extracting matched customer tweets...")
+    customer_tweets = {}
 
-    # Reconstruct threads
-    conversations = reconstruct_threads(df, brand)
+    for chunk in tqdm(
+        pd.read_csv(raw_path, chunksize=chunk_size, dtype=str, low_memory=False),
+        desc="Pass 2 (Customer tweets)"
+    ):
+        chunk["tweet_id_num"] = pd.to_numeric(chunk["tweet_id"], errors="coerce")
+        matched = chunk[chunk["tweet_id_num"].isin(parent_ids)]
+        for _, row in matched.iterrows():
+            tid = int(row["tweet_id_num"])
+            customer_tweets[tid] = row["text"]
+
+    logger.info(f"Retrieved text for {len(customer_tweets):,} customer tweets")
+
+    # Reconstruct pairs
+    conversations = []
+    for _, b_row in tqdm(df_brand.iterrows(), total=len(df_brand), desc="Pairing conversations"):
+        in_resp = b_row["in_response_to_tweet_id"]
+        if pd.isna(in_resp):
+            continue
+        in_resp_id = int(in_resp)
+        raw_cust_text = customer_tweets.get(in_resp_id)
+        if not raw_cust_text:
+            continue
+
+        c_text = clean_tweet(raw_cust_text)
+        b_text = clean_tweet(b_row.get("text", ""))
+
+        if len(c_text) < 10 or len(b_text) < 10:
+            continue
+
+        conversations.append({
+            "conversation_id": str(int(b_row["tweet_id"])) if pd.notna(b_row["tweet_id"]) else str(b_row["tweet_id"]),
+            "customer_tweet_id": str(in_resp_id),
+            "brand_tweet_id": str(int(b_row["tweet_id"])) if pd.notna(b_row["tweet_id"]) else str(b_row["tweet_id"]),
+            "customer_message": c_text,
+            "brand_reply": b_text,
+            "created_at": str(b_row.get("created_at", "")),
+            "brand": brand,
+        })
+
+    logger.success(f"Reconstructed {len(conversations):,} clean conversation pairs")
 
     if sample_size and len(conversations) > sample_size:
         import random
@@ -165,10 +212,9 @@ def process_data(
         logger.info(f"Sampled down to {sample_size:,} conversations")
 
     # Save
-    output_file.write_text(json.dumps(conversations, indent=2, ensure_ascii=False))
+    output_file.write_text(json.dumps(conversations, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.success(f"Saved {len(conversations):,} conversations to {output_file}")
 
-    # Save stats
     stats = {
         "brand": brand,
         "total_raw_rows": total_rows,
@@ -177,7 +223,7 @@ def process_data(
         "avg_brand_reply_length": sum(len(c["brand_reply"]) for c in conversations) / max(len(conversations), 1),
     }
     stats_file = processed_path / f"{brand.lower()}_stats.json"
-    stats_file.write_text(json.dumps(stats, indent=2))
+    stats_file.write_text(json.dumps(stats, indent=2), encoding="utf-8")
     logger.info(f"Stats: {stats}")
 
     return output_file
@@ -194,7 +240,7 @@ def load_conversations(brand: Optional[str] = None) -> list[dict]:
         logger.error("Run: python src/data/preprocess.py first")
         return []
 
-    conversations = json.loads(output_file.read_text())
+    conversations = json.loads(output_file.read_text(encoding="utf-8"))
     logger.info(f"Loaded {len(conversations):,} conversations for {brand}")
     return conversations
 

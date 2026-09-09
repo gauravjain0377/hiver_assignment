@@ -10,7 +10,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # LLM
     groq_api_key: str = Field(..., env="GROQ_API_KEY")
-    groq_model: str = Field("llama-3.1-70b-versatile", env="GROQ_MODEL")
+    groq_model: str = Field("groq/compound-mini", env="GROQ_MODEL")
     mistral_api_key: str = Field("", env="MISTRAL_API_KEY")
 
     # Vector DB
@@ -18,9 +18,10 @@ class Settings(BaseSettings):
     qdrant_api_key: str = Field("", env="QDRANT_API_KEY")
     qdrant_collection_name: str = Field("hiver_support_tweets", env="QDRANT_COLLECTION_NAME")
 
-    # Kaggle
+    # Kaggle (supports BOTH old username/key AND new KGAT_ token format)
     kaggle_username: str = Field("", env="KAGGLE_USERNAME")
     kaggle_key: str = Field("", env="KAGGLE_KEY")
+    kaggle_token: str = Field("", env="KAGGLE_TOKEN")  # New KGAT_ format
 
     # HuggingFace
     hf_token: str = Field("", env="HF_TOKEN")

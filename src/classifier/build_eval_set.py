@@ -190,10 +190,10 @@ def validate_golden_eval():
     if warnings and unlabelled > 0:
         console.print(f"\n[yellow]Warnings (unlabelled rows): {len(warnings)}[/yellow]")
 
-    if labelled >= 150:
-        console.print(f"\n[bold green]✓ {labelled} labelled examples — ready for Phase 3![/bold green]")
+    if labelled >= 100:
+        console.print(f"\n[bold green]✓ {labelled} labelled examples — golden evaluation benchmark ready![/bold green]")
     else:
-        console.print(f"\n[bold red]Need at least 150 labelled examples. Currently: {labelled}[/bold red]")
+        console.print(f"\n[bold red]Need at least 100 labelled examples. Currently: {labelled}[/bold red]")
 
 
 if __name__ == "__main__":

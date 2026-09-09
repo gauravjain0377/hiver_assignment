@@ -14,17 +14,37 @@ from src.config import settings
 
 
 def setup_kaggle_credentials():
-    """Set Kaggle credentials from environment variables."""
-    if not settings.kaggle_username or not settings.kaggle_key:
-        logger.error(
-            "Missing KAGGLE_USERNAME or KAGGLE_KEY in .env file.\n"
-            "See .env.example for setup instructions."
-        )
-        sys.exit(1)
+    """
+    Set Kaggle credentials.
+    New Kaggle SDK v2 reads KAGGLE_API_TOKEN env var OR ~/.kaggle/access_token file.
+    """
+    import pathlib
 
-    os.environ["KAGGLE_USERNAME"] = settings.kaggle_username
-    os.environ["KAGGLE_KEY"] = settings.kaggle_key
-    logger.info(f"Kaggle credentials set for user: {settings.kaggle_username}")
+    if settings.kaggle_token and settings.kaggle_token.startswith("KGAT_"):
+        # Set env var the new SDK reads
+        os.environ["KAGGLE_API_TOKEN"] = settings.kaggle_token
+        os.environ["KAGGLE_TOKEN"] = settings.kaggle_token
+
+        # Also write to ~/.kaggle/access_token (fallback for SDK file-based auth)
+        kaggle_dir = pathlib.Path.home() / ".kaggle"
+        kaggle_dir.mkdir(exist_ok=True)
+        token_file = kaggle_dir / "access_token"
+        token_file.write_text(settings.kaggle_token)
+        logger.info(f"Kaggle KGAT token configured (env + {token_file})")
+        return
+
+    if settings.kaggle_username and settings.kaggle_key and \
+       settings.kaggle_username != "your_kaggle_username":
+        os.environ["KAGGLE_USERNAME"] = settings.kaggle_username
+        os.environ["KAGGLE_KEY"] = settings.kaggle_key
+        logger.info(f"Kaggle username/key set for: {settings.kaggle_username}")
+        return
+
+    logger.error(
+        "No valid Kaggle credentials found!\n"
+        "Add to your .env: KAGGLE_TOKEN=KGAT_xxxxxxxxxxxx"
+    )
+    sys.exit(1)
 
 
 def download_dataset():

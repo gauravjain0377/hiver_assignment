@@ -137,7 +137,7 @@ def run_eda():
                   for k, v in stats.items()},
         "intent_keyword_counts": intent_analysis["counts"],
         "sample_examples": {k: v[:2] for k, v in intent_analysis["examples"].items()},
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
     logger.success(f"EDA results saved to {eda_output}")
 
 
